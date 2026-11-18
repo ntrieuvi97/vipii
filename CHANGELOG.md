@@ -2,12 +2,21 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-19
+
+Alpha. The guard has had no independent review yet.
+
 ### Added
 - `vipii guard`: Claude Code hooks that mask tool output (`PostToolUse`), restore placeholders in
   Edit/Write/Bash input, block prompts that contain PII and restore values on screen only.
   `vipii guard --install/--uninstall/--purge`. Known limits are in the README.
 - Claude Code plugin and marketplace manifests (`.claude-plugin/`) and an Antigravity plugin
   manifest (`.antigravity-plugin/`); the repo installs as a plugin on both.
+
+### Fixed
+- Windows reports a file that another process is replacing as `PermissionError`; the lock, the
+  read and the atomic replace now treat it as "busy" and retry instead of failing or treating
+  the mapping as corrupt.
 
 ## [0.1.0] - 2026-11-19
 

@@ -41,7 +41,7 @@ python3 -m venv .venv
 ```
 
 Windows và môi trường đã có venv đang bật: `pip install git+https://github.com/ntrieuvi97/vipii`.
-Muốn cố định một bản (ví dụ cho CI): thêm `@v0.1.0` vào cuối URL.
+Muốn cố định một bản (ví dụ cho CI): thêm `@v0.2.0` vào cuối URL.
 
 ## Loại dữ liệu hỗ trợ
 
