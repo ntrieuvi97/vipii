@@ -84,7 +84,7 @@ class _Lock:
             try:
                 os.close(os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
                 return self
-            except FileExistsError:
+            except (FileExistsError, PermissionError):  # Windows: delete pending = busy
                 try:
                     if time.time() - self.path.stat().st_mtime > LOCK_STALE:
                         self.path.unlink()  # a crashed hook left it behind
@@ -102,16 +102,29 @@ class _Lock:
             pass
 
 
+def _retry_os(fn: Callable[[], Any], attempts: int = 50) -> Any:
+    """Windows reports a file that another process is replacing as PermissionError."""
+    for i in range(attempts):
+        try:
+            return fn()
+        except PermissionError:
+            if i == attempts - 1:
+                raise
+            time.sleep(0.02)
+
+
 def _load(path: Path) -> dict[str, str]:
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        text = _retry_os(lambda: path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}  # any other OSError propagates: never mistake "busy" for "corrupt"
+    try:
+        data = json.loads(text)
         if isinstance(data, dict):
             return {str(k): str(v) for k, v in data.items()}
-    except FileNotFoundError:
-        return {}
-    except (OSError, ValueError):
+    except ValueError:
         pass
-    try:  # unreadable: keep the evidence aside and start a fresh mapping
+    try:  # not valid JSON: keep the evidence aside and start a fresh mapping
         path.replace(path.with_suffix(f".corrupt-{int(time.time())}"))
     except OSError:
         pass
@@ -123,7 +136,7 @@ def _save(path: Path, mapping: Mapping[str, str]) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(mapping, f, ensure_ascii=False)
-        os.replace(tmp, path)
+        _retry_os(lambda: os.replace(tmp, path))
     except BaseException:
         try:
             os.unlink(tmp)

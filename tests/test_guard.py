@@ -418,3 +418,53 @@ def test_cli_install_and_uninstall(tmp_path):
     r = subprocess.run([sys.executable, "-m", "vipii", "guard", "--uninstall", "--settings",
                         str(p)], cwd=ROOT, capture_output=True)
     assert r.returncode == 0 and our_commands(json.loads(p.read_text())) == []
+
+
+# --------------------------------------------------------------- Windows-style transient errors
+
+def test_lock_survives_transient_permission_errors(state, monkeypatch):
+    """Windows raises PermissionError while a just-deleted lock file is being released."""
+    state.mkdir(parents=True, mode=0o700)
+    real, calls = os.open, {"n": 0}
+
+    def flaky(path, flags, *a, **k):
+        if str(path).endswith(".lock") and calls["n"] < 3:
+            calls["n"] += 1
+            raise PermissionError("delete pending")
+        return real(path, flags, *a, **k)
+
+    monkeypatch.setattr(guard.os, "open", flaky)
+    out = updated(post("Bash", {"stdout": RAW}, state))
+    assert "<PHONE_NUMBER_1>" in out["stdout"] and calls["n"] == 3
+
+
+def test_transient_read_error_does_not_destroy_the_mapping(state, monkeypatch):
+    seed(state)
+    path = state / "sess-1.json"
+    real, calls = Path.read_text, {"n": 0}
+
+    def flaky(self, *a, **k):
+        if self == path and calls["n"] < 2:
+            calls["n"] += 1
+            raise PermissionError("file in use")
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(Path, "read_text", flaky)
+    assert guard._load(path)["<PERSON_1>"] == NAME
+    assert not list(state.glob("*.corrupt-*"))
+
+
+def test_replace_is_retried_when_the_file_is_briefly_in_use(state, monkeypatch):
+    seed(state)
+    real, calls = os.replace, {"n": 0}
+
+    def flaky(src, dst):
+        if calls["n"] < 2:
+            calls["n"] += 1
+            raise PermissionError("in use")
+        return real(src, dst)
+
+    monkeypatch.setattr(guard.os, "replace", flaky)
+    out = updated(post("Bash", {"stdout": "Gọi 0987654321 nhé"}, state))
+    assert "0987654321" not in out["stdout"] and calls["n"] == 2
+    assert "0987654321" in mapping(state).values()
