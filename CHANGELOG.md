@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Claude Code plugin and marketplace manifests (`.claude-plugin/`) and an Antigravity plugin
+  manifest (`.antigravity-plugin/`); the repo installs as a plugin on both.
+
 ## [0.1.0] - 2026-11-19
 
 First public release.
