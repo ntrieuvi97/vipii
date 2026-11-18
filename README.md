@@ -134,6 +134,50 @@ copy repo vào `~/.gemini/config/plugins/vipii/` (toàn cục) hoặc `.agents/p
 Copy [`skills/vipii/`](skills/vipii/SKILL.md) vào thư mục skills của agent, ví dụ
 `~/.claude/skills/vipii/`, `~/.hermes/skills/vipii/` hoặc `~/.gemini/config/skills/vipii/`.
 
+## Guard: ép agent chỉ đọc nội dung đã che (Claude Code)
+
+Skill chỉ *nhờ* agent che dữ liệu; agent vẫn có thể quên và đọc file thô. `vipii guard` *ép* ở tầng
+công cụ bằng hook của Claude Code:
+
+| Hook | Việc làm |
+|---|---|
+| `PostToolUse` | Che mọi chuỗi trong kết quả của `Read`, `Bash`, `WebFetch`, MCP… **trước khi** model thấy |
+| `PreToolUse` | Đổi placeholder trong input của `Edit`/`Write`/`Bash` về giá trị thật (để agent sửa được file đã che); chặn đọc file mapping, ảnh, PDF |
+| `UserPromptSubmit` | Chặn prompt chứa PII và hiện bản đã che để bạn gửi lại |
+| `MessageDisplay` | Khôi phục giá trị thật trong chữ **bạn đọc**; model vẫn chỉ thấy placeholder |
+
+```bash
+vipii guard --install              # ghi hook vào ~/.claude/settings.json (giữ nguyên cấu hình khác)
+vipii guard --install --project    # hoặc chỉ cho dự án hiện tại (./.claude/settings.json)
+vipii guard --uninstall            # gỡ
+vipii guard --purge                # xóa mọi file mapping đã lưu
+```
+
+Cần `pipx install` hoặc venv như ở trên: đường dẫn Python tuyệt đối được ghi vào hook. Nếu bạn chuyển/xóa
+môi trường đó, chạy lại `--install`. Mapping lưu ở `~/.vipii/guard/<session>.json` (quyền 0600, tự xóa sau 7 ngày),
+agent không đọc được. Biến môi trường: `VIPII_GUARD=off` (tắt hết), `VIPII_GUARD_PROMPT=off` (không chặn prompt),
+`VIPII_GUARD_TERMS="NHAN=file1.txt;DUAN=file2.txt"` (từ khóa bí mật), `VIPII_GUARD_DIR`. Cố ý gửi nguyên văn: thêm
+`#allow-pii` vào prompt.
+
+Đã chạy thử với Claude Code thật: model chỉ thấy `<PHONE_NUMBER_1>`; transcript trên đĩa không chứa giá trị thật;
+`Edit` qua placeholder ghi đúng giá trị thật vào file; prompt có PII bị chặn; hook hỏng thì công cụ bị chặn.
+
+**Giới hạn, cần đọc trước khi tin vào guard:**
+
+- **Chỉ chặn được văn bản bình thường.** Nếu agent (hoặc một prompt injection) tự chạy `rev file`, `base64 file`
+  hay script biến đổi dữ liệu, PII đã bị biến dạng sẽ lọt qua; đã thử và xác nhận. Guard chống rò rỉ *vô tình*,
+  không chống agent cố tình lách. Muốn đảm bảo cứng, agent không được có quyền truy cập file thô (che trước bằng
+  `vipii anonymize`, rồi chỉ cho agent thấy thư mục đã che).
+- Chỉ che được những gì bộ nhận dạng thấy: tên lạ, địa chỉ viết thường… vẫn lọt như mọi nơi khác trong vipii.
+- Ảnh, PDF, âm thanh không che được nên `Read` bị từ chối; hãy chuyển sang văn bản và che trước.
+- Prompt bạn gõ bị **chặn rồi gửi lại**, không được tự động che (hook không sửa được prompt). Muốn tự động che
+  cả prompt thì cần proxy giữa agent và LLM, chưa có trong bản này.
+- Mapping theo phiên: gửi lại bản đã che trong *cùng* phiên thì placeholder được khôi phục; sang phiên mới thì không.
+- Hook chạy sau công cụ nên không rút lại được output: nhờ `PreToolUse` dùng cùng lệnh làm "chốt chặn" mà guard
+  hỏng thì công cụ bị chặn từ đầu, nhưng hook `PostToolUse` bị timeout riêng lẻ vẫn có thể để lọt. Telemetry
+  OpenTelemetry của Claude Code ghi output gốc trước khi hook chạy (chỉ ở máy bạn).
+- Antigravity và các agent khác chưa được hỗ trợ; chưa chạy thử guard trên Windows (unit test có chạy trong CI).
+
 ## Cơ chế chấm điểm
 
 Mỗi bộ nhận dạng gán điểm 0–1, mặc định chỉ giữ thực thể có điểm ≥ 0.5 (`threshold`).

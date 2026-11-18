@@ -129,7 +129,27 @@ def _main(argv: list[str] | None) -> int:
     d.add_argument("file", nargs="?")
     d.add_argument("--map", required=True)
 
+    g = sub.add_parser("guard", help="Claude Code hook: reads one hook event on stdin")
+    g.add_argument("--purge", action="store_true", help="delete all stored session mappings")
+    g.add_argument("--install", action="store_true", help="add the guard hooks to settings.json")
+    g.add_argument("--uninstall", action="store_true", help="remove the guard hooks")
+    g.add_argument("--project", action="store_true",
+                   help="with --install/--uninstall: use ./.claude/settings.json")
+    g.add_argument("--settings", metavar="PATH",
+                   help="settings file (default ~/.claude/settings.json)")
+
     args = p.parse_args(argv)
+    if args.cmd == "guard":
+        from . import guard
+        if args.install or args.uninstall:
+            path = Path(args.settings) if args.settings else guard.default_settings(args.project)
+            try:
+                status = guard.install(path, uninstall=args.uninstall)
+            except ValueError as exc:
+                raise CliError(str(exc)) from None
+            print(f"vipii guard: hooks {status} in {path}", file=sys.stderr)
+            return 0
+        return guard.main(purge_state=args.purge)
     # Vietnamese text must survive non-UTF-8 locales (Windows consoles, LC_ALL=C).
     for stream in (sys.stdin, sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):

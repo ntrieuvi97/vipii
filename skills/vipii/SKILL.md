@@ -95,3 +95,12 @@ reply must be restored.
   input. They are restored verbatim. Do not treat them as PII.
 - `vipii deanonymize` exits with code 2 if the mapping file is missing or corrupt. Never
   fall back to sending or showing the masked text as the final answer without saying so.
+
+## When `vipii guard` is installed
+
+If tool results already show placeholders such as `<PERSON_1>`, the guard is active: it masked the
+data before you saw it, and it restores real values when you edit files or run commands and when the
+user reads your reply. Work with the placeholders as if they were the data. Do **not** try to read the
+real values around the guard (no `rev`, `base64`, scripts that re-encode a file, or reading
+`~/.vipii/`), and never ask the user to paste raw personal data. If a Read of an image or PDF is
+denied, ask the user to convert it to text and mask it with `vipii anonymize` first.

@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ### Added
+- `vipii guard`: Claude Code hooks that mask tool output (`PostToolUse`), restore placeholders in
+  Edit/Write/Bash input, block prompts that contain PII and restore values on screen only.
+  `vipii guard --install/--uninstall/--purge`. Known limits are in the README.
 - Claude Code plugin and marketplace manifests (`.claude-plugin/`) and an Antigravity plugin
   manifest (`.antigravity-plugin/`); the repo installs as a plugin on both.
 
