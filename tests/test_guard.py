@@ -414,7 +414,7 @@ def test_cli_install_and_uninstall(tmp_path):
     r = subprocess.run([sys.executable, "-m", "vipii", "guard", "--install", "--settings", str(p)],
                        cwd=ROOT, capture_output=True)
     assert r.returncode == 0 and len(our_commands(json.loads(p.read_text()))) == 4
-    assert sys.executable.encode() in p.read_bytes()
+    assert {h["command"] for _, _, h in our_commands(json.loads(p.read_text()))} == {sys.executable}
     r = subprocess.run([sys.executable, "-m", "vipii", "guard", "--uninstall", "--settings",
                         str(p)], cwd=ROOT, capture_output=True)
     assert r.returncode == 0 and our_commands(json.loads(p.read_text())) == []
