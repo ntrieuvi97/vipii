@@ -38,7 +38,8 @@ def test_bank_account_needs_context():
 # --- Email
 
 def test_detects_email():
-    assert types("email: nguyen.van.a@congty.example.vn") == [("EMAIL", "nguyen.van.a@congty.example.vn")]
+    email = "nguyen.van.a@congty.example.vn"
+    assert types(f"email: {email}") == [("EMAIL", email)]
 
 
 # --- License plates

@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def run(*args, stdin=""):
     return subprocess.run(
         [sys.executable, "-m", "vipii", *args],
-        input=stdin, capture_output=True, text=True, cwd=ROOT, check=True,
+        input=stdin, capture_output=True, text=True, encoding="utf-8", cwd=ROOT, check=True,
     ).stdout
 
 
