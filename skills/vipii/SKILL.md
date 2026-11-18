@@ -27,9 +27,13 @@ Skip it for text that is already public.
 ## Setup
 
 ```bash
-pip install git+https://github.com/ntrieuvi97/vipii@v0.1.0
+pipx install git+https://github.com/ntrieuvi97/vipii   # Linux/macOS: pip is blocked by PEP 668
 vipii --help
 ```
+
+Without pipx, use a venv: `python3 -m venv ~/.vipii-venv && ~/.vipii-venv/bin/pip install git+https://github.com/ntrieuvi97/vipii`,
+then call `~/.vipii-venv/bin/vipii`. Never use `--break-system-packages`. On Windows, plain
+`pip install git+https://github.com/ntrieuvi97/vipii` works. To pin a release, append `@v0.1.0`.
 
 Keep the mapping file **outside** any directory that gets shared, synced, committed
 or uploaded, for example `~/.vipii/session.json`.

@@ -12,11 +12,36 @@ Tài liệu nội bộ → vipii che → LLM cloud → vipii khôi phục → ng
 
 ## Cài đặt
 
+Yêu cầu Python 3.10 trở lên. Không cần thư viện nào khác. Lệnh dưới đây luôn lấy **bản mới nhất**
+trên nhánh `main` (không ghim phiên bản).
+
+Linux (Debian, Ubuntu, Linux Mint…) và macOS (Homebrew) chặn `pip install` vào Python hệ thống
+(lỗi `externally-managed-environment`, PEP 668). Đừng dùng `--break-system-packages`; chọn một trong hai cách:
+
+**Cách 1: dùng lệnh `vipii` (khuyên dùng), cài bằng pipx**
+
 ```bash
-pip install git+https://github.com/ntrieuvi97/vipii@v0.1.0
+sudo apt install pipx && pipx ensurepath      # Debian/Ubuntu/Mint; macOS: brew install pipx
+pipx install git+https://github.com/ntrieuvi97/vipii
 ```
 
-Yêu cầu Python 3.10 trở lên. Không cần thư viện nào khác.
+Mở lại terminal rồi chạy `vipii --help`. Cập nhật lên bản mới nhất:
+
+```bash
+pipx install --force git+https://github.com/ntrieuvi97/vipii
+```
+
+**Cách 2: dùng như thư viện Python trong dự án của bạn, cài vào venv**
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install git+https://github.com/ntrieuvi97/vipii
+# cập nhật:
+.venv/bin/pip install --upgrade --force-reinstall --no-deps git+https://github.com/ntrieuvi97/vipii
+```
+
+Windows và môi trường đã có venv đang bật: `pip install git+https://github.com/ntrieuvi97/vipii`.
+Muốn cố định một bản (ví dụ cho CI): thêm `@v0.1.0` vào cuối URL.
 
 ## Loại dữ liệu hỗ trợ
 
