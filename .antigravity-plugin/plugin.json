@@ -1,0 +1,10 @@
+{
+  "$schema": "https://antigravity.google/schemas/v1/plugin.json",
+  "name": "vipii",
+  "displayName": "vipii: Vietnamese PII guard",
+  "version": "0.1.0",
+  "description": "Mask Vietnamese personal data before it reaches an LLM, then restore it. Offline, zero dependencies.",
+  "suggestedPrompts": [
+    "Mask the personal data in this Vietnamese document before you read it"
+  ]
+}

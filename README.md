@@ -72,12 +72,42 @@ vipii deanonymize tra_loi_llm.txt --map map.json             # khôi phục
 File `map.json` được ghi với quyền `0600` (chỉ chủ sở hữu đọc được). Nếu file đã tồn tại,
 mapping cũ được dùng tiếp để placeholder nhất quán giữa các tài liệu.
 
-## Skill cho AI agent
+## Skill / plugin cho AI agent
 
-Thư mục [`skills/vipii/`](skills/vipii/SKILL.md) chứa một skill theo chuẩn Agent Skills,
-hướng dẫn các agent (Claude Code, Codex, Hermes…) che dữ liệu **trước khi** gửi ra ngoài,
-giữ file mapping an toàn và khôi phục câu trả lời. Cách cài: copy thư mục đó vào thư mục
-skills của agent, ví dụ `~/.claude/skills/vipii/` hoặc `~/.hermes/skills/vipii/`.
+Repo này đồng thời là **plugin** cho Claude Code và Antigravity. Plugin chỉ cài *skill*
+(hướng dẫn agent che dữ liệu **trước khi** gửi ra ngoài, giữ file mapping an toàn, khôi phục
+câu trả lời). Bản thân thư viện vẫn cần cài riêng bằng `pip install` ở trên.
+
+### Claude Code
+
+```text
+/plugin marketplace add ntrieuvi97/vipii
+/plugin install vipii@vipii
+```
+
+Hoặc từ shell:
+
+```bash
+claude plugin marketplace add ntrieuvi97/vipii
+claude plugin install vipii@vipii
+```
+
+Skill xuất hiện dưới tên `/vipii:vipii`. Cập nhật bằng `claude plugin marketplace update vipii`.
+
+### Antigravity (App, CLI, IDE)
+
+```bash
+agy plugin install https://github.com/ntrieuvi97/vipii
+```
+
+Trong CLI tương tác: `/plugin install https://github.com/ntrieuvi97/vipii`. Ngoài ra có thể
+copy repo vào `~/.gemini/config/plugins/vipii/` (toàn cục) hoặc `.agents/plugins/vipii/`
+(chỉ một dự án). Skill gọi bằng `/vipii`.
+
+### Agent khác (Codex, Hermes…) hoặc chỉ cần skill
+
+Copy [`skills/vipii/`](skills/vipii/SKILL.md) vào thư mục skills của agent, ví dụ
+`~/.claude/skills/vipii/`, `~/.hermes/skills/vipii/` hoặc `~/.gemini/config/skills/vipii/`.
 
 ## Cơ chế chấm điểm
 

@@ -1,0 +1,16 @@
+{
+  "name": "vipii",
+  "description": "vipii: Vietnamese PII guard for AI agents",
+  "owner": {
+    "name": "Vi Nguyen",
+    "url": "https://github.com/ntrieuvi97"
+  },
+  "plugins": [
+    {
+      "name": "vipii",
+      "source": "./",
+      "description": "Mask Vietnamese PII before it reaches an LLM, then restore it. Offline, zero dependencies.",
+      "version": "0.1.0"
+    }
+  ]
+}
