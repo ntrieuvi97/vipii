@@ -28,8 +28,11 @@ from typing import Any
 
 from .anonymizer import anonymize, deanonymize
 from .core import Analyzer
+from .guard_config import GuardConfig, config_path, retry_os
+from .guard_config import load as load_config
 
-__all__ = ["deanonymize", "handle", "install", "main", "purge", "run"]
+__all__ = ["deanonymize", "default_settings", "handle", "hooks_in", "install", "main", "purge",
+           "run"]
 
 LOCK_TIMEOUT = 5.0
 LOCK_STALE = 30.0
@@ -102,15 +105,7 @@ class _Lock:
             pass
 
 
-def _retry_os(fn: Callable[[], Any], attempts: int = 50) -> Any:
-    """Windows reports a file that another process is replacing as PermissionError."""
-    for i in range(attempts):
-        try:
-            return fn()
-        except PermissionError:
-            if i == attempts - 1:
-                raise
-            time.sleep(0.02)
+_retry_os = retry_os
 
 
 def _load(path: Path) -> dict[str, str]:
@@ -147,13 +142,12 @@ def _save(path: Path, mapping: Mapping[str, str]) -> None:
 
 # ----------------------------------------------------------------------------- masking
 
-def _analyzer(env: Mapping[str, str]) -> Analyzer:
-    spec = env.get("VIPII_GUARD_TERMS", "")
-    if not spec:
+def _analyzer(cfg: GuardConfig) -> Analyzer:
+    if not cfg.terms:
         from . import _get_default
         return _get_default()
     from .cli import _terms
-    return Analyzer(custom_terms=_terms([s for s in spec.split(";") if s]))
+    return Analyzer(custom_terms=_terms([s for s in cfg.terms.split(";") if s]))
 
 
 def _walk(obj: Any, fn: Callable[[str], str], key: str | None = None) -> Any:
@@ -203,14 +197,14 @@ def _hook(kind: str, **fields: Any) -> dict[str, Any]:
     return {"hookSpecificOutput": {"hookEventName": kind, **fields}}
 
 
-def _post(event: dict, state: Path, env: Mapping[str, str]) -> dict | None:
+def _post(event: dict, state: Path, cfg: GuardConfig, env: Mapping[str, str]) -> dict | None:
     resp = event.get("tool_response")
     if resp is None:
         return None
     if _is_binary(resp):
         new = _withhold(resp)
     else:
-        analyzer = _analyzer(env)
+        analyzer = _analyzer(cfg)
         _ensure_dir(state)
         path = _session_file(state, event)
         with _Lock(path):
@@ -223,28 +217,41 @@ def _post(event: dict, state: Path, env: Mapping[str, str]) -> dict | None:
     return None if new == resp else _hook("PostToolUse", updatedToolOutput=new)
 
 
-def _touches_state(tool_input: Any, state: Path) -> bool:
-    flat = json.dumps(tool_input, ensure_ascii=False).replace("\\\\", "/").lower()
-    return str(state).replace("\\", "/").lower() in flat or ".vipii/guard" in flat
+def _flat(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False).replace("\\\\", "/").lower()
+
+
+def _touches_state(tool_input: Any, state: Path, config: Path | None = None) -> bool:
+    flat = _flat(tool_input)
+    protected = [str(state), str(config)] if config else [str(state)]
+    return (any(p.replace("\\", "/").lower() in flat for p in protected)
+            or ".vipii/guard" in flat)  # covers the session dir and guard-config.json
+
+
+_CONTROL = re.compile(r"(?:^|[\s;&|(`'\"/\\])vipii(?:\.exe)?\s+guard\b|-m\s+vipii\s+guard\b")
+CONTROL_DENIED = ("vipii guard: its settings and stored mappings are not available to the agent. "
+                  "To change a setting the user can run /vipii:guard <command> (or "
+                  "`vipii guard <command>` in a terminal).")
 
 
 def _deny(reason: str) -> dict:
     return _hook("PreToolUse", permissionDecision="deny", permissionDecisionReason=reason)
 
 
-def _pre(event: dict, state: Path, env: Mapping[str, str]) -> dict | None:
+def _pre(event: dict, state: Path, cfg: GuardConfig, env: Mapping[str, str]) -> dict | None:
     tool = str(event.get("tool_name", ""))
     tool_input = event.get("tool_input")
     if not isinstance(tool_input, dict):
         return None
-    if _touches_state(tool_input, state):
-        return _deny("vipii guard: the session mapping files hold the real values and are "
-                     "not available to the agent.")
+    if _touches_state(tool_input, state, config_path(env)):
+        return _deny(CONTROL_DENIED)
+    if tool == "Bash" and _CONTROL.search(str(tool_input.get("command", ""))):
+        return _deny(CONTROL_DENIED)
     suffix = Path(str(tool_input.get("file_path", ""))).suffix.lower()
     if tool == "Read" and suffix in BINARY_SUFFIXES:
         return _deny("vipii guard: images, PDFs and media cannot be masked. Convert them to "
                      "text, mask the text with `vipii anonymize`, and read that copy.")
-    if tool not in RESTORE_TOOLS:
+    if tool not in RESTORE_TOOLS or not cfg.restore_edits:
         return None
     mapping = _load(_session_file(state, event))
     if not mapping:
@@ -253,13 +260,13 @@ def _pre(event: dict, state: Path, env: Mapping[str, str]) -> dict | None:
     return None if new == tool_input else _hook("PreToolUse", updatedInput=new)
 
 
-def _prompt(event: dict, state: Path, env: Mapping[str, str]) -> dict | None:
-    if env.get("VIPII_GUARD_PROMPT", "block").lower() == "off":
+def _prompt(event: dict, state: Path, cfg: GuardConfig, env: Mapping[str, str]) -> dict | None:
+    if cfg.prompt == "off":
         return None
     text = str(event.get("prompt", ""))
     if ALLOW_MARKER in text:
         return None
-    analyzer = _analyzer(env)
+    analyzer = _analyzer(cfg)
     found = analyzer.analyze(text)
     if not found:
         return None
@@ -278,10 +285,10 @@ def _prompt(event: dict, state: Path, env: Mapping[str, str]) -> dict | None:
             **_hook("UserPromptSubmit", suppressOriginalPrompt=True)}
 
 
-def _display(event: dict, state: Path, env: Mapping[str, str]) -> dict | None:
+def _display(event: dict, state: Path, cfg: GuardConfig, env: Mapping[str, str]) -> dict | None:
     delta = event.get("delta")
-    if not isinstance(delta, str) or not delta:
-        return None
+    if cfg.display != "restored" or not isinstance(delta, str) or not delta:
+        return None  # default: the user sees the same masked text as the model
     mapping = _load(_session_file(state, event))
     if not mapping:
         return None
@@ -305,22 +312,25 @@ def _failsafe(event: dict, kind: str) -> dict | None:
     return None  # MessageDisplay and others: the original text only holds placeholders
 
 
-_HANDLERS = {"PostToolUse": _post, "PreToolUse": _pre, "UserPromptSubmit": _prompt,
-             "MessageDisplay": _display}
+_HANDLERS: dict[str, Callable[..., dict | None]] = {
+    "PostToolUse": _post, "PreToolUse": _pre, "UserPromptSubmit": _prompt,
+    "MessageDisplay": _display,
+}
 
 
 def handle(event: dict, state_dir: str | Path | None = None,
            env: Mapping[str, str] | None = None) -> dict | None:
     """Map one hook event to the JSON the hook must print (None = print nothing)."""
     env = os.environ if env is None else env
-    if env.get("VIPII_GUARD", "").lower() in {"off", "0", "false"}:
-        return None
     kind = str(event.get("hook_event_name", ""))
     fn = _HANDLERS.get(kind)
     if fn is None:
         return None
     try:
-        return fn(event, _state_dir(state_dir, env), env)
+        cfg = load_config(env)
+        if not cfg.enabled:
+            return None
+        return fn(event, _state_dir(state_dir, env), cfg, env)
     except Exception:
         return _failsafe(event, kind)
 
@@ -353,20 +363,22 @@ def purge(state_dir: str | Path | None = None, env: Mapping[str, str] | None = N
 
 
 _FAIL_CLOSED = {"PostToolUse", "PreToolUse", "UserPromptSubmit"}
-_EVENTS = [("PreToolUse", "*"), ("PostToolUse", "*"), ("UserPromptSubmit", None),
-           ("MessageDisplay", None)]
+_EVENTS = [("PreToolUse", "*"), ("PostToolUse", "*"), ("UserPromptSubmit", None)]
 
 
 def _is_ours(handler: Mapping[str, Any]) -> bool:
     return handler.get("args") == ["-m", "vipii", "guard"]
 
 
-def install(settings: Path, python: str | None = None, uninstall: bool = False) -> str:
+def install(settings: Path, python: str | None = None, uninstall: bool = False,
+            restored_display: bool = False) -> str:
     """Add (or remove) the guard hooks in a Claude Code ``settings.json``.
 
     Other settings and hooks are kept, the file is replaced atomically, the previous
     version is saved as ``settings.json.vipii-bak``, and running it twice changes nothing.
     The interpreter is stored as an absolute path, so hooks do not depend on ``PATH``.
+    The ``MessageDisplay`` hook (real values on the user's screen) is only registered when
+    ``restored_display`` is set; by default the user sees the same masked text as the model.
     """
     python = python or sys.executable
     try:
@@ -391,7 +403,8 @@ def install(settings: Path, python: str | None = None, uninstall: bool = False) 
         else:
             del hooks[event]
     if not uninstall:
-        for event, matcher in _EVENTS:
+        events = [*_EVENTS, *([("MessageDisplay", None)] if restored_display else [])]
+        for event, matcher in events:
             handler: dict[str, Any] = {"type": "command", "command": python,
                                        "args": ["-m", "vipii", "guard"]}
             if event in _FAIL_CLOSED:
@@ -417,10 +430,22 @@ def install(settings: Path, python: str | None = None, uninstall: bool = False) 
 
 
 def default_settings(project: bool = False, env: Mapping[str, str] | None = None) -> Path:
-    env = os.environ if env is None else env
     if project:
         return Path.cwd() / ".claude" / "settings.json"
-    return Path(env.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "settings.json"
+    for source in (env or {}, os.environ):
+        if source.get("CLAUDE_CONFIG_DIR"):
+            return Path(source["CLAUDE_CONFIG_DIR"]) / "settings.json"
+    return Path.home() / ".claude" / "settings.json"
+
+
+def hooks_in(settings: Path) -> list[str]:
+    """Events for which ``settings`` contains a vipii guard hook (empty if none/unreadable)."""
+    try:
+        hooks = json.loads(settings.read_text(encoding="utf-8")).get("hooks", {})
+        return sorted(e for e, groups in hooks.items()
+                      if any(_is_ours(h) for g in groups for h in g.get("hooks", [])))
+    except (OSError, ValueError, AttributeError):
+        return []
 
 
 def main(purge_state: bool = False) -> int:

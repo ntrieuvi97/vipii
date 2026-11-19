@@ -227,7 +227,8 @@ def test_prompt_with_pii_is_blocked_and_shows_a_masked_copy(state):
 def test_masked_copy_resent_later_restores_in_the_same_session(state):
     prompt(f"Gửi {NAME}", state)
     shown = guard.handle(ev("MessageDisplay", delta="Đã soạn thư cho <PERSON_1>.\n", index=0,
-                            final=False), state_dir=state)
+                            final=False), state_dir=state,
+                         env={"VIPII_GUARD_DISPLAY": "restored"})
     assert NAME in shown["hookSpecificOutput"]["displayContent"]
 
 
@@ -247,7 +248,8 @@ def test_allow_marker_and_env_switches(state):
 def test_display_restores_real_values_but_only_on_screen(state):
     seed(state)
     out = guard.handle(ev("MessageDisplay", delta="Gọi <PHONE_NUMBER_1> cho <PERSON_1>\n",
-                          index=0, final=False), state_dir=state)
+                          index=0, final=False), state_dir=state,
+                       env={"VIPII_GUARD_DISPLAY": "restored"})
     shown = out["hookSpecificOutput"]["displayContent"]
     assert PHONE in shown and NAME in shown
 
@@ -255,7 +257,7 @@ def test_display_restores_real_values_but_only_on_screen(state):
 def test_display_without_placeholders_changes_nothing(state):
     seed(state)
     assert guard.handle(ev("MessageDisplay", delta="xin chào\n", index=0, final=False),
-                        state_dir=state) is None
+                        state_dir=state, env={"VIPII_GUARD_DISPLAY": "restored"}) is None
 
 
 # --------------------------------------------------------------- custom terms, misc
@@ -364,12 +366,11 @@ def our_commands(settings):
     return found
 
 
-def test_install_creates_all_four_hooks_fail_closed(tmp_path):
+def test_install_creates_the_three_masking_hooks_fail_closed(tmp_path):
     p = tmp_path / ".claude" / "settings.json"
     install(p)
     cmds = our_commands(json.loads(p.read_text(encoding="utf-8")))
-    assert sorted(e for e, _, _ in cmds) == ["MessageDisplay", "PostToolUse", "PreToolUse",
-                                              "UserPromptSubmit"]
+    assert sorted(e for e, _, _ in cmds) == ["PostToolUse", "PreToolUse", "UserPromptSubmit"]
     by = {e: (m, h) for e, m, h in cmds}
     assert by["PostToolUse"][0] == "*" and by["PreToolUse"][0] == "*"
     for e in ("PostToolUse", "PreToolUse", "UserPromptSubmit"):
@@ -387,7 +388,7 @@ def test_install_keeps_existing_settings_and_is_idempotent(tmp_path):
     data = json.loads(p.read_text(encoding="utf-8"))
     assert data["model"] == "opus"
     assert {"matcher": "Bash", "hooks": [mine]} in data["hooks"]["PostToolUse"]
-    assert len(our_commands(data)) == 4
+    assert len(our_commands(data)) == 3
     assert (tmp_path / "settings.json.vipii-bak").exists()
 
 
@@ -413,7 +414,7 @@ def test_cli_install_and_uninstall(tmp_path):
     p = tmp_path / "s.json"
     r = subprocess.run([sys.executable, "-m", "vipii", "guard", "--install", "--settings", str(p)],
                        cwd=ROOT, capture_output=True)
-    assert r.returncode == 0 and len(our_commands(json.loads(p.read_text()))) == 4
+    assert r.returncode == 0 and len(our_commands(json.loads(p.read_text()))) == 3
     assert {h["command"] for _, _, h in our_commands(json.loads(p.read_text()))} == {sys.executable}
     r = subprocess.run([sys.executable, "-m", "vipii", "guard", "--uninstall", "--settings",
                         str(p)], cwd=ROOT, capture_output=True)

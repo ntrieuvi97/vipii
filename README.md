@@ -41,7 +41,7 @@ python3 -m venv .venv
 ```
 
 Windows và môi trường đã có venv đang bật: `pip install git+https://github.com/ntrieuvi97/vipii`.
-Muốn cố định một bản (ví dụ cho CI): thêm `@v0.2.0` vào cuối URL.
+Muốn cố định một bản (ví dụ cho CI): thêm `@v0.3.0` vào cuối URL.
 
 ## Loại dữ liệu hỗ trợ
 
@@ -137,30 +137,51 @@ Copy [`skills/vipii/`](skills/vipii/SKILL.md) vào thư mục skills của agent
 ## Guard: ép agent chỉ đọc nội dung đã che (Claude Code)
 
 Skill chỉ *nhờ* agent che dữ liệu; agent vẫn có thể quên và đọc file thô. `vipii guard` *ép* ở tầng
-công cụ bằng hook của Claude Code:
+công cụ bằng hook của Claude Code. Mặc định **chỉ che**: model và bạn cùng thấy `<PERSON_1>`, không có gì
+tự khôi phục lên màn hình.
 
 | Hook | Việc làm |
 |---|---|
 | `PostToolUse` | Che mọi chuỗi trong kết quả của `Read`, `Bash`, `WebFetch`, MCP… **trước khi** model thấy |
-| `PreToolUse` | Đổi placeholder trong input của `Edit`/`Write`/`Bash` về giá trị thật (để agent sửa được file đã che); chặn đọc file mapping, ảnh, PDF |
+| `PreToolUse` | Đổi placeholder trong input của `Edit`/`Write`/`Bash` về giá trị thật (để agent sửa được file đã che); chặn đọc file mapping/cấu hình, ảnh, PDF; chặn agent tự chạy `vipii guard ...` |
 | `UserPromptSubmit` | Chặn prompt chứa PII và hiện bản đã che để bạn gửi lại |
-| `MessageDisplay` | Khôi phục giá trị thật trong chữ **bạn đọc**; model vẫn chỉ thấy placeholder |
+| `MessageDisplay` | Tùy chọn, mặc định **tắt**: khôi phục giá trị thật trong chữ bạn đọc |
 
 ```bash
-vipii guard --install              # ghi hook vào ~/.claude/settings.json (giữ nguyên cấu hình khác)
-vipii guard --install --project    # hoặc chỉ cho dự án hiện tại (./.claude/settings.json)
-vipii guard --uninstall            # gỡ
-vipii guard --purge                # xóa mọi file mapping đã lưu
+vipii guard install              # ghi hook vào ~/.claude/settings.json (giữ nguyên cấu hình khác)
+vipii guard install --project    # hoặc chỉ cho dự án hiện tại (./.claude/settings.json)
 ```
 
-Cần `pipx install` hoặc venv như ở trên: đường dẫn Python tuyệt đối được ghi vào hook. Nếu bạn chuyển/xóa
-môi trường đó, chạy lại `--install`. Mapping lưu ở `~/.vipii/guard/<session>.json` (quyền 0600, tự xóa sau 7 ngày),
-agent không đọc được. Biến môi trường: `VIPII_GUARD=off` (tắt hết), `VIPII_GUARD_PROMPT=off` (không chặn prompt),
-`VIPII_GUARD_TERMS="NHAN=file1.txt;DUAN=file2.txt"` (từ khóa bí mật), `VIPII_GUARD_DIR`. Cố ý gửi nguyên văn: thêm
-`#allow-pii` vào prompt.
+Cần `pipx install` hoặc venv như ở trên (đường dẫn Python tuyệt đối được ghi vào hook; chuyển/xóa môi trường
+đó thì chạy lại `install`). Mapping lưu ở `~/.vipii/guard/<session>.json` (quyền 0600, tự xóa sau 7 ngày).
+
+### Cấu hình bằng lệnh hoặc slash command
+
+Cùng một bộ lệnh, ở terminal là `vipii guard <lệnh>`, trong Claude Code là `/vipii:guard <lệnh>`
+(plugin `vipii`; trong Antigravity là `/guard <lệnh>`).
+
+| Lệnh | Tác dụng |
+|---|---|
+| `status` | Xem cấu hình hiện hành, hook đã cài ở đâu, số phiên đang lưu |
+| `enable` / `disable` | Bật hoặc tắt toàn bộ guard (hook vẫn nằm trong settings) |
+| `prompt block` / `prompt off` | Chặn prompt có PII (mặc định) hoặc cho qua |
+| `display masked` / `display restored` | Bạn đọc chữ đã che (mặc định) hoặc có giá trị thật khôi phục |
+| `restore-edits on` / `off` | Đổi placeholder về giá trị thật trong input của `Edit`/`Write`/`Bash` (mặc định bật) |
+| `terms NHAN=file.txt;...` / `terms clear` | Từ khóa bí mật cần che thêm (tên dự án, khách hàng) |
+| `config [khóa [giá trị]]` | Xem hoặc đổi bất kỳ mục nào ở trên |
+| `reset` | Về mặc định |
+| `install` / `uninstall` | Thêm hoặc gỡ hook (`--project`: chỉ dự án hiện tại) |
+| `purge` | Xóa mọi mapping đã lưu |
+
+Cấu hình nằm ở `~/.vipii/guard-config.json` (0600). Biến môi trường ghi đè được (dùng cho CI hoặc chạy một lần):
+`VIPII_GUARD=off`, `VIPII_GUARD_PROMPT`, `VIPII_GUARD_DISPLAY`, `VIPII_GUARD_RESTORE_EDITS`, `VIPII_GUARD_TERMS`,
+`VIPII_GUARD_CONFIG`, `VIPII_GUARD_DIR`. Cố ý gửi nguyên văn một prompt: thêm `#allow-pii` vào prompt.
+Đổi `display` sẽ tự cập nhật hook đã cài. Slash command chạy lệnh trực tiếp (không qua model) và agent bị chặn
+tự chạy `vipii guard ...`, nên prompt injection không tắt được guard.
 
 Đã chạy thử với Claude Code thật: model chỉ thấy `<PHONE_NUMBER_1>`; transcript trên đĩa không chứa giá trị thật;
-`Edit` qua placeholder ghi đúng giá trị thật vào file; prompt có PII bị chặn; hook hỏng thì công cụ bị chặn.
+`Edit` qua placeholder ghi đúng giá trị thật vào file; prompt có PII bị chặn; hook hỏng thì công cụ bị chặn;
+`/vipii:guard` đổi được cấu hình.
 
 **Giới hạn, cần đọc trước khi tin vào guard:**
 
@@ -168,15 +189,21 @@ agent không đọc được. Biến môi trường: `VIPII_GUARD=off` (tắt h�
   hay script biến đổi dữ liệu, PII đã bị biến dạng sẽ lọt qua; đã thử và xác nhận. Guard chống rò rỉ *vô tình*,
   không chống agent cố tình lách. Muốn đảm bảo cứng, agent không được có quyền truy cập file thô (che trước bằng
   `vipii anonymize`, rồi chỉ cho agent thấy thư mục đã che).
+- Agent vẫn sửa được `~/.claude/settings.json` bằng công cụ sửa file và gỡ hook; guard chỉ chặn các lệnh `vipii guard`
+  và file cấu hình của nó. Hãy để Claude Code hỏi quyền khi sửa file cấu hình.
+- Lệnh `!` trong một skill (ví dụ skill của bên thứ ba có `!`cat khach_hang.csv``) chạy **ngoài** hook nên không
+  được che.
 - Chỉ che được những gì bộ nhận dạng thấy: tên lạ, địa chỉ viết thường… vẫn lọt như mọi nơi khác trong vipii.
 - Ảnh, PDF, âm thanh không che được nên `Read` bị từ chối; hãy chuyển sang văn bản và che trước.
 - Prompt bạn gõ bị **chặn rồi gửi lại**, không được tự động che (hook không sửa được prompt). Muốn tự động che
   cả prompt thì cần proxy giữa agent và LLM, chưa có trong bản này.
-- Mapping theo phiên: gửi lại bản đã che trong *cùng* phiên thì placeholder được khôi phục; sang phiên mới thì không.
+- Mapping theo phiên: gửi lại bản đã che trong *cùng* phiên thì placeholder được khôi phục khi sửa file; sang phiên mới thì không.
 - Hook chạy sau công cụ nên không rút lại được output: nhờ `PreToolUse` dùng cùng lệnh làm "chốt chặn" mà guard
   hỏng thì công cụ bị chặn từ đầu, nhưng hook `PostToolUse` bị timeout riêng lẻ vẫn có thể để lọt. Telemetry
   OpenTelemetry của Claude Code ghi output gốc trước khi hook chạy (chỉ ở máy bạn).
-- Antigravity và các agent khác chưa được hỗ trợ; chưa chạy thử guard trên Windows (unit test có chạy trong CI).
+- **Antigravity chưa có guard.** Hook `PostToolUse` của Antigravity không nhận kết quả của công cụ và chỉ được trả
+  `{}`, nên không che được output như Claude Code; slash command `/guard` ở đó chỉ đổi cấu hình dùng chung.
+  Chưa chạy thử guard với Claude Code trên Windows (unit test có chạy trong CI).
 
 ## Cơ chế chấm điểm
 

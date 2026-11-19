@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-19
+
+Alpha. The guard has had no independent review yet.
+
+### Changed
+- `vipii guard` now only masks by default: the `MessageDisplay` hook (real values on the user's screen) is
+  no longer installed and is off unless `display restored` is set.
+
+### Added
+- Settings file `~/.vipii/guard-config.json` and control commands `vipii guard status | enable | disable |
+  prompt | display | restore-edits | terms | config | reset | install | uninstall | purge`.
+- Slash command skill `guard` (`/vipii:guard <command>` in Claude Code, `/guard` in Antigravity). It runs
+  without the model, and the agent is denied from running `vipii guard ...` or reading the config file.
+
 ## [0.2.0] - 2026-11-19
 
 Alpha. The guard has had no independent review yet.

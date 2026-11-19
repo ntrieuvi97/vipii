@@ -129,27 +129,41 @@ def _main(argv: list[str] | None) -> int:
     d.add_argument("file", nargs="?")
     d.add_argument("--map", required=True)
 
-    g = sub.add_parser("guard", help="Claude Code hook: reads one hook event on stdin")
+    g = sub.add_parser("guard", help="keep PII away from a coding agent (Claude Code hooks)")
+    g.add_argument("words", nargs="*", metavar="command",
+                   help="status | enable | disable | prompt | display | install | ... "
+                        "(none: read one hook event on stdin)")
     g.add_argument("--purge", action="store_true", help="delete all stored session mappings")
     g.add_argument("--install", action="store_true", help="add the guard hooks to settings.json")
     g.add_argument("--uninstall", action="store_true", help="remove the guard hooks")
     g.add_argument("--project", action="store_true",
-                   help="with --install/--uninstall: use ./.claude/settings.json")
+                   help="with install/uninstall: use ./.claude/settings.json")
     g.add_argument("--settings", metavar="PATH",
                    help="settings file (default ~/.claude/settings.json)")
 
     args = p.parse_args(argv)
     if args.cmd == "guard":
-        from . import guard
-        if args.install or args.uninstall:
+        from . import guard, guard_config, guard_ctl
+        for stream in (sys.stdout, sys.stderr):
+            if hasattr(stream, "reconfigure"):
+                stream.reconfigure(encoding="utf-8")
+        if args.install or args.uninstall:  # older spelling of `install` / `uninstall`
             path = Path(args.settings) if args.settings else guard.default_settings(args.project)
             try:
-                status = guard.install(path, uninstall=args.uninstall)
+                status = guard.install(
+                    path, uninstall=args.uninstall,
+                    restored_display=guard_config.load().display == "restored")
             except ValueError as exc:
                 raise CliError(str(exc)) from None
             print(f"vipii guard: hooks {status} in {path}", file=sys.stderr)
             return 0
-        return guard.main(purge_state=args.purge)
+        if args.purge:
+            return guard.main(purge_state=True)
+        if args.words:
+            code, text = guard_ctl.run(args.words, project=args.project)
+            (sys.stderr if code else sys.stdout).write(text)
+            return code
+        return guard.main()
     # Vietnamese text must survive non-UTF-8 locales (Windows consoles, LC_ALL=C).
     for stream in (sys.stdin, sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
