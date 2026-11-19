@@ -33,7 +33,7 @@ vipii --help
 
 Without pipx, use a venv: `python3 -m venv ~/.vipii-venv && ~/.vipii-venv/bin/pip install git+https://github.com/ntrieuvi97/vipii`,
 then call `~/.vipii-venv/bin/vipii`. Never use `--break-system-packages`. On Windows, plain
-`pip install git+https://github.com/ntrieuvi97/vipii` works. To pin a release, append `@v0.3.0`.
+`pip install git+https://github.com/ntrieuvi97/vipii` works. To pin a release, append `@v0.3.1`.
 
 Keep the mapping file **outside** any directory that gets shared, synced, committed
 or uploaded, for example `~/.vipii/session.json`.

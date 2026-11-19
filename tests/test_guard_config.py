@@ -299,3 +299,41 @@ def test_cli_without_words_is_still_the_hook_protocol():
     event = ev("PostToolUse", tool_name="Bash", tool_input={}, tool_response={"stdout": f"{NAME}"})
     p = run(stdin=json.dumps(event, ensure_ascii=False).encode("utf-8"))
     assert p.returncode == 0 and b"updatedToolOutput" in p.stdout
+
+
+# ------------------------------------------------------------------ the slash command must explain itself
+
+def test_errors_through_the_slash_command_do_not_fail_the_shell_line():
+    """`!` lines abort the whole skill on a non-zero exit, so ctl reports errors as text."""
+    code, text = ctl("ctl", "display", "loud")
+    assert code == 0 and "usage" in text.lower() and "display must be" in text
+    assert ctl("display", "loud")[0] == 2  # a human at a terminal still gets exit code 2
+
+
+def test_cli_ctl_prefix_exits_zero_on_bad_input_and_plain_form_exits_two():
+    assert run("ctl", "display", "loud").returncode == 0
+    assert run("display", "loud").returncode == 2
+
+
+def test_version_flag_exists():
+    from vipii import __version__
+    p = subprocess.run([sys.executable, "-m", "vipii", "--version"], cwd=ROOT, capture_output=True)
+    assert p.returncode == 0 and __version__.encode() in p.stdout
+
+
+def skill_text():
+    return (ROOT / "skills" / "guard" / "SKILL.md").read_text(encoding="utf-8")
+
+
+def test_guard_skill_is_user_only_and_runs_without_a_prompt():
+    head = skill_text().split("---")[1]
+    assert "disable-model-invocation: true" in head
+    assert "Bash(vipii guard *)" in head
+
+
+def test_guard_skill_explains_an_old_or_missing_vipii_instead_of_failing():
+    body = skill_text()
+    line = next(ln for ln in body.splitlines() if ln.startswith("!`"))
+    assert "vipii guard ctl $ARGUMENTS" in line and "||" in line
+    assert "pipx install --force git+https://github.com/ntrieuvi97/vipii" in line
+    assert "Bash(echo *)" in body.split("---")[1]  # the fallback must not need an approval

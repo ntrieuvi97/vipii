@@ -97,15 +97,19 @@ def run(words: Sequence[str], env: Mapping[str, str] | None = None,
     env = os.environ if env is None else env
     args = [w for w in words if w != "--project"]
     project = project or "--project" in words
-    if args and args[0] == "ctl":
+    # `ctl` is what the slash command passes. A `!` line in a skill aborts the whole skill on a
+    # non-zero exit, so there errors are reported as text with exit code 0.
+    via_slash = bool(args) and args[0] == "ctl"
+    failed = 0 if via_slash else 2
+    if via_slash:
         args = args[1:]
     cmd, rest = (args[0].lower(), args[1:]) if args else ("status", [])
     try:
         return 0, _dispatch(cmd, rest, env, project)
     except (UsageError, ValueError) as exc:
-        return 2, f"vipii guard: {exc}\n\n{USAGE}"
+        return failed, f"vipii guard: {exc}\n\n{USAGE}"
     except OSError as exc:
-        return 2, f"vipii guard: {exc}\n"
+        return failed, f"vipii guard: {exc}\n"
 
 
 def _dispatch(cmd: str, rest: list[str], env: Mapping[str, str], project: bool) -> str:

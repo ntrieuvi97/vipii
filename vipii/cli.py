@@ -9,7 +9,7 @@ import tempfile
 import warnings
 from pathlib import Path
 
-from . import Analyzer, anonymize, deanonymize
+from . import Analyzer, __version__, anonymize, deanonymize
 from .anonymizer import OPERATORS
 
 
@@ -107,6 +107,7 @@ def _main(argv: list[str] | None) -> int:
     p = argparse.ArgumentParser(
         prog="vipii", description="Vietnamese PII detection & anonymization"
     )
+    p.add_argument("--version", action="version", version=f"vipii {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     def common(sp):

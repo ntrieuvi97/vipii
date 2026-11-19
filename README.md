@@ -41,7 +41,7 @@ python3 -m venv .venv
 ```
 
 Windows và môi trường đã có venv đang bật: `pip install git+https://github.com/ntrieuvi97/vipii`.
-Muốn cố định một bản (ví dụ cho CI): thêm `@v0.3.0` vào cuối URL.
+Muốn cố định một bản (ví dụ cho CI): thêm `@v0.3.1` vào cuối URL.
 
 ## Loại dữ liệu hỗ trợ
 
@@ -178,6 +178,10 @@ Cấu hình nằm ở `~/.vipii/guard-config.json` (0600). Biến môi trường
 `VIPII_GUARD_CONFIG`, `VIPII_GUARD_DIR`. Cố ý gửi nguyên văn một prompt: thêm `#allow-pii` vào prompt.
 Đổi `display` sẽ tự cập nhật hook đã cài. Slash command chạy lệnh trực tiếp (không qua model) và agent bị chặn
 tự chạy `vipii guard ...`, nên prompt injection không tắt được guard.
+
+**Gặp lỗi `invalid choice: 'guard'`?** Lệnh `vipii` trên PATH là bản cũ (trước 0.2.0) nên chưa có `guard`, thường do
+cài với `@v0.1.0`. Cài lại bản mới nhất: `pipx install --force git+https://github.com/ntrieuvi97/vipii`, rồi kiểm tra
+bằng `vipii --version`. Từ 0.3.1, `/vipii:guard` tự báo điều này thay vì in lỗi.
 
 Đã chạy thử với Claude Code thật: model chỉ thấy `<PHONE_NUMBER_1>`; transcript trên đĩa không chứa giá trị thật;
 `Edit` qua placeholder ghi đúng giá trị thật vào file; prompt có PII bị chặn; hook hỏng thì công cụ bị chặn;

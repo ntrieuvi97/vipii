@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-19
+
+### Fixed
+- `/vipii:guard` with an old `vipii` on PATH (no `guard` command) printed a raw argparse error and aborted;
+  it now tells the user to upgrade. Errors reported through the slash command no longer fail the `!` shell
+  line (exit code 0 with the message), because a failing `!` line aborts the whole skill.
+
+### Added
+- `vipii --version`.
+
 ## [0.3.0] - 2026-11-19
 
 Alpha. The guard has had no independent review yet.

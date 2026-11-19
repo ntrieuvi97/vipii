@@ -1,7 +1,7 @@
 {
   "name": "vipii",
   "displayName": "vipii: Vietnamese PII guard",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Mask Vietnamese personal data (names, phone, CCCD, tax code, cards, addresses...) before text goes to an LLM, then restore it. Offline, zero dependencies.",
   "author": { "name": "Vi Nguyen", "url": "https://github.com/ntrieuvi97" },
   "homepage": "https://github.com/ntrieuvi97/vipii",

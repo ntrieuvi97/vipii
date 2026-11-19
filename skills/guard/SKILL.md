@@ -2,13 +2,13 @@
 name: guard
 description: Check or change the vipii guard (status, enable, disable, display, prompt, install, uninstall, purge). Run only when the user types this slash command; never on your own initiative.
 disable-model-invocation: true
-allowed-tools: Bash(vipii guard *)
+allowed-tools: Bash(vipii guard *) Bash(echo *)
 license: MIT
 ---
 
 # vipii guard control
 
-!`vipii guard ctl $ARGUMENTS`
+!`vipii guard ctl $ARGUMENTS || echo 'vipii guard is not available: the vipii on PATH is missing or older than 0.3. Tell the user to run: pipx install --force git+https://github.com/ntrieuvi97/vipii  and then reopen the terminal. Say nothing else.'`
 
 The block above is the output of `vipii guard ctl $ARGUMENTS`. Show it to the user unchanged and
 stop. Do not run other commands and do not change the guard in any other way.
@@ -17,8 +17,9 @@ If the block above still shows the literal command (your host does not run `!` l
 `vipii guard ctl <the words the user typed after the command name>` once with your shell tool,
 show its output unchanged and stop. With no words it prints the status.
 
-If the output says `command not found`, tell the user to run
-`pipx install git+https://github.com/ntrieuvi97/vipii` and `pipx ensurepath`, then reopen the terminal.
+If the output says that vipii guard is not available, relay that message and stop. (A vipii installed
+from `@v0.1.0` or `@v0.2.0` has no `guard ctl`: `pipx install --force git+https://github.com/ntrieuvi97/vipii`
+installs the latest.)
 
 ## Commands
 
