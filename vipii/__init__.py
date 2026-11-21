@@ -12,7 +12,7 @@ __all__ = [
     "deanonymize",
     "normalize",
 ]
-__version__ = "0.3.1"
+__version__ = "0.4.0"
 
 _default: Analyzer | None = None
 

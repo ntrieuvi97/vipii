@@ -1,0 +1,16 @@
+{
+  "vipii-guard": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "vipii guard",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

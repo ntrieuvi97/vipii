@@ -10,7 +10,7 @@
       "name": "vipii",
       "source": "./",
       "description": "Mask Vietnamese PII before it reaches an LLM, then restore it. Offline, zero dependencies.",
-      "version": "0.3.1"
+      "version": "0.4.0"
     }
   ]
 }

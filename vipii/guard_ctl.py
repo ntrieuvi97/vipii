@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 
 from . import __version__, guard, guard_config
 
@@ -47,6 +48,18 @@ def _hook_locations(env: Mapping[str, str]) -> list[str]:
     for label, project in (("user", False), ("project", True)):
         path = guard.default_settings(project, env)
         if guard.hooks_in(path):
+            found.append(f"{label}: {path}")
+    home = Path(env.get("HOME") or env.get("USERPROFILE") or Path.home())
+    agy_paths = (
+        ("antigravity user plugin",
+         home / ".gemini" / "config" / "plugins" / "vipii" / "hooks.json"),
+        ("antigravity user", home / ".gemini" / "config" / "hooks.json"),
+        ("antigravity project plugin",
+         Path.cwd() / ".agents" / "plugins" / "vipii" / "hooks.json"),
+        ("antigravity project", Path.cwd() / ".agents" / "hooks.json"),
+    )
+    for label, path in agy_paths:
+        if guard.antigravity_hooks_in(path):
             found.append(f"{label}: {path}")
     return found
 

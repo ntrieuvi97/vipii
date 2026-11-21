@@ -130,7 +130,8 @@ def _main(argv: list[str] | None) -> int:
     d.add_argument("file", nargs="?")
     d.add_argument("--map", required=True)
 
-    g = sub.add_parser("guard", help="keep PII away from a coding agent (Claude Code hooks)")
+    g = sub.add_parser("guard",
+                       help="keep PII away from a coding agent (Claude Code & Antigravity hooks)")
     g.add_argument("words", nargs="*", metavar="command",
                    help="status | enable | disable | prompt | display | install | ... "
                         "(none: read one hook event on stdin)")
@@ -141,6 +142,9 @@ def _main(argv: list[str] | None) -> int:
                    help="with install/uninstall: use ./.claude/settings.json")
     g.add_argument("--settings", metavar="PATH",
                    help="settings file (default ~/.claude/settings.json)")
+    g.add_argument("--exec", action="store_true", help=argparse.SUPPRESS)
+    g.add_argument("--session", default="default", help=argparse.SUPPRESS)
+    g.add_argument("--cmd-b64", default=None, help=argparse.SUPPRESS)
 
     args = p.parse_args(argv)
     if args.cmd == "guard":
@@ -148,6 +152,19 @@ def _main(argv: list[str] | None) -> int:
         for stream in (sys.stdout, sys.stderr):
             if hasattr(stream, "reconfigure"):
                 stream.reconfigure(encoding="utf-8")
+        if args.exec:
+            if args.cmd_b64 is not None:
+                import base64
+                import binascii
+                try:
+                    cmd = base64.b64decode(args.cmd_b64, validate=True).decode("utf-8")
+                except (binascii.Error, UnicodeDecodeError) as exc:
+                    raise CliError(f"invalid --cmd-b64: {exc}") from None
+            elif args.words:
+                cmd = args.words[0] if len(args.words) == 1 else " ".join(args.words)
+            else:
+                raise CliError("--exec requires a command")
+            return guard.exec_command(cmd, session_id=args.session)
         if args.install or args.uninstall:  # older spelling of `install` / `uninstall`
             path = Path(args.settings) if args.settings else guard.default_settings(args.project)
             try:

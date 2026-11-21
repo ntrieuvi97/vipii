@@ -33,7 +33,7 @@ installs the latest.)
 | `terms LABEL=FILE;...` / `terms clear` | secret terms (project or client names) to mask besides built-in PII |
 | `config [KEY [VALUE]]` | show or change any setting |
 | `reset` | back to the defaults |
-| `install` / `uninstall` | add or remove the hooks in `~/.claude/settings.json` (`--project`: this project only) |
+| `install` / `uninstall` | add or remove the Claude Code hooks in `~/.claude/settings.json` (`--project`: this project only; Antigravity loads `hooks.json` from the plugin) |
 | `purge` | delete all stored session mappings |
 
 Only the user can run these. The guard denies the same commands when the agent tries them.

@@ -41,7 +41,7 @@ python3 -m venv .venv
 ```
 
 Windows và môi trường đã có venv đang bật: `pip install git+https://github.com/ntrieuvi97/vipii`.
-Muốn cố định một bản (ví dụ cho CI): thêm `@v0.3.1` vào cuối URL.
+Muốn cố định một bản (ví dụ cho CI): thêm `@v0.4.0` vào cuối URL.
 
 ## Loại dữ liệu hỗ trợ
 
@@ -134,11 +134,13 @@ copy repo vào `~/.gemini/config/plugins/vipii/` (toàn cục) hoặc `.agents/p
 Copy [`skills/vipii/`](skills/vipii/SKILL.md) vào thư mục skills của agent, ví dụ
 `~/.claude/skills/vipii/`, `~/.hermes/skills/vipii/` hoặc `~/.gemini/config/skills/vipii/`.
 
-## Guard: ép agent chỉ đọc nội dung đã che (Claude Code)
+## Guard: ép agent chỉ đọc nội dung đã che (Claude Code & Antigravity)
 
 Skill chỉ *nhờ* agent che dữ liệu; agent vẫn có thể quên và đọc file thô. `vipii guard` *ép* ở tầng
-công cụ bằng hook của Claude Code. Mặc định **chỉ che**: model và bạn cùng thấy `<PERSON_1>`, không có gì
+công cụ bằng hook của Claude Code và Antigravity. Mặc định **chỉ che**: model và bạn cùng thấy `<PERSON_1>`, không có gì
 tự khôi phục lên màn hình.
+
+### Claude Code
 
 | Hook | Việc làm |
 |---|---|
@@ -154,6 +156,17 @@ vipii guard install --project    # hoặc chỉ cho dự án hiện tại (./.cl
 
 Cần `pipx install` hoặc venv như ở trên (đường dẫn Python tuyệt đối được ghi vào hook; chuyển/xóa môi trường
 đó thì chạy lại `install`). Mapping lưu ở `~/.vipii/guard/<session>.json` (quyền 0600, tự xóa sau 7 ngày).
+
+### Antigravity (App, CLI, IDE)
+
+Plugin đóng gói sẵn [`hooks.json`](hooks.json) với `PreToolUse` (gọi `vipii guard`), nên chỉ cần cài plugin và cài `vipii` trên `PATH` (ví dụ bằng `pipx install`) là guard tự bật — không cần chạy `vipii guard install`.
+
+Vì `PostToolUse` của Antigravity không nhận kết quả của công cụ và chỉ trả về `{}`, mọi bảo vệ được thực hiện ở `PreToolUse`:
+
+- **`read_file` / `view_file` / `view_file_outline` / `view_code_item`**: đọc và che file cục bộ trước khi tool chạy, lưu bản đã che ở `~/.vipii/guard/cache/` (quyền 0600) và `overwrite` đường dẫn sang bản đã che (file không có PII giữ nguyên). Chặn ảnh/PDF/media/file nhị phân.
+- **`run_command`**: bọc lệnh qua `vipii guard --exec` để che `stdout`/`stderr` trước khi Antigravity nhận kết quả (trả về đúng exit code).
+- **`write_file` / `edit_file` / `write_to_file` / `replace_file_content` / `multi_replace_file_content` / `manage_task` / `send_command_input` / `run_command`**: khôi phục placeholder về giá trị thật khi `restore-edits` bật.
+- **Chặn cứng**: `grep_search` (vì output không che được; agent phải dùng `read_file` hoặc `run_command`), truy cập `~/.vipii/guard*` / `guard-config.json`, và chạy `vipii guard ...`. Tắt/mở tạm bằng `/guard disable` / `/guard enable`.
 
 ### Cấu hình bằng lệnh hoặc slash command
 
@@ -205,9 +218,14 @@ bằng `vipii --version`. Từ 0.3.1, `/vipii:guard` tự báo điều này thay
 - Hook chạy sau công cụ nên không rút lại được output: nhờ `PreToolUse` dùng cùng lệnh làm "chốt chặn" mà guard
   hỏng thì công cụ bị chặn từ đầu, nhưng hook `PostToolUse` bị timeout riêng lẻ vẫn có thể để lọt. Telemetry
   OpenTelemetry của Claude Code ghi output gốc trước khi hook chạy (chỉ ở máy bạn).
-- **Antigravity chưa có guard.** Hook `PostToolUse` của Antigravity không nhận kết quả của công cụ và chỉ được trả
-  `{}`, nên không che được output như Claude Code; slash command `/guard` ở đó chỉ đổi cấu hình dùng chung.
-  Chưa chạy thử guard với Claude Code trên Windows (unit test có chạy trong CI).
+- **Giới hạn riêng của Antigravity:**
+  - `PostToolUse` không sửa được output và Antigravity chưa có `UserPromptSubmit` hay `MessageDisplay`:
+    output của `search_web`, `read_url_content`, `browser_*` và tool MCP **không** được hook tự che;
+    prompt bạn gõ có PII không bị chặn tự động (chú ý che trước khi gửi);
+    `display restored` không có tác dụng trên Antigravity (màn hình luôn hiện placeholder).
+  - `read_file` dùng `ByteOffset` trên file có PII bị từ chối vì che làm lệch offset byte (agent cần dùng `StartLine`/`EndLine`).
+  - `hooks.json` trong plugin gọi `vipii guard` từ `PATH` (nếu cài `vipii` bằng `pipx`, đảm bảo `PATH` có `~/.local/bin`); nếu bật Terminal Sandbox, sandbox phải cho phép ghi vào `~/.vipii/guard` (hoặc đặt `VIPII_GUARD_DIR`).
+  - Chưa chạy thử guard với Claude Code trên Windows (unit test có chạy trong CI).
 
 ## Cơ chế chấm điểm
 

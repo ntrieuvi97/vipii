@@ -33,7 +33,7 @@ vipii --help
 
 Without pipx, use a venv: `python3 -m venv ~/.vipii-venv && ~/.vipii-venv/bin/pip install git+https://github.com/ntrieuvi97/vipii`,
 then call `~/.vipii-venv/bin/vipii`. Never use `--break-system-packages`. On Windows, plain
-`pip install git+https://github.com/ntrieuvi97/vipii` works. To pin a release, append `@v0.3.1`.
+`pip install git+https://github.com/ntrieuvi97/vipii` works. To pin a release, append `@v0.4.0`.
 
 Keep the mapping file **outside** any directory that gets shared, synced, committed
 or uploaded, for example `~/.vipii/session.json`.
@@ -111,5 +111,8 @@ real values back for you (unless the user turned `restore-edits` off).
   Antigravity) or run `vipii guard <command>` in a terminal. `/vipii:guard status` shows the settings.
 - If a Read of an image or PDF is denied, ask the user to convert it to text and mask it with
   `vipii anonymize` first.
+- In Antigravity, `grep_search` is denied by the guard (use `read_file` or `run_command`, whose
+  outputs are masked), and `read_file` with `ByteOffset` on a file containing PII is denied
+  (use `StartLine` and `EndLine` instead).
 - Skills that inject shell output with `!`command`` bypass the hooks. Never write one that prints raw
   personal data.

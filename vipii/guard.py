@@ -1,7 +1,8 @@
-"""vipii guard: Claude Code hooks that keep raw PII away from the model.
+"""vipii guard: Claude Code and Antigravity hooks that keep raw PII away from the model.
 
 A skill only *asks* the agent to mask data. These hooks *enforce* it at the tool layer:
 
+Claude Code:
 * ``PostToolUse``      masks every string in a tool result before the model sees it
   (``updatedToolOutput``): file reads, shell output, web fetches, MCP tools.
 * ``PreToolUse``       turns placeholders in Edit/Write/Bash input back into real values
@@ -10,16 +11,30 @@ A skill only *asks* the agent to mask data. These hooks *enforce* it at the tool
 * ``UserPromptSubmit`` blocks a prompt that contains PII and shows a masked copy.
 * ``MessageDisplay``   restores real values in what *you* read; the model keeps placeholders.
 
+Antigravity (``PostToolUse`` cannot inspect or rewrite outputs, so ``PreToolUse`` enforces):
+* ``PreToolUse``       masks files locally and overwrites ``Path``/``AbsolutePath`` on
+  ``read_file``/``view_file``/outline tools; wraps ``run_command`` via ``vipii guard --exec``
+  so stdout/stderr are masked; restores placeholders in write/edit/command inputs; denies
+  ``grep_search``, mapping/config access, and binary/non-UTF-8 files.
+
 Hooks are separate processes, so the placeholder mapping is a private per-session file.
 Every failure path ends in "withheld" or "blocked", never in "original shown".
 """
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import os
+import queue
 import re
+import shlex
+import shutil
+import stat
+import subprocess
 import sys
 import tempfile
+import threading
 import time
 from collections import Counter
 from collections.abc import Callable, Mapping
@@ -31,8 +46,8 @@ from .core import Analyzer
 from .guard_config import GuardConfig, config_path, retry_os
 from .guard_config import load as load_config
 
-__all__ = ["deanonymize", "default_settings", "handle", "hooks_in", "install", "main", "purge",
-           "run"]
+__all__ = ["antigravity_hooks_in", "deanonymize", "default_settings", "exec_command", "handle",
+           "hooks_in", "install", "main", "purge", "run"]
 
 LOCK_TIMEOUT = 5.0
 LOCK_STALE = 30.0
@@ -45,6 +60,26 @@ BINARY_TYPES = {"image", "pdf", "audio", "video", "document"}
 RESTORE_TOOLS = {"Edit", "MultiEdit", "Write", "Bash", "NotebookEdit"}
 KEEP_WHEN_WITHHOLDING = {"type", "mode", "media_type"}  # keep the output schema valid
 
+AGY_READ_PATH_KEYS: dict[str, str] = {
+    "read_file": "Path",
+    "view_file": "AbsolutePath",
+    "view_file_outline": "AbsolutePath",
+    "view_code_item": "File",
+}
+AGY_RESTORE_FIELDS: dict[str, tuple[str, ...]] = {
+    "write_file": ("Content",),
+    "edit_file": ("Target", "Replacement"),
+    "write_to_file": ("CodeContent",),
+    "replace_file_content": ("TargetContent", "ReplacementContent"),
+    "multi_replace_file_content": ("ReplacementChunks",),
+    "manage_task": ("Input",),
+    "send_command_input": ("Input",),
+}
+AGY_DENIED_TOOLS = {"grep_search"}
+_AGY_PATH_KEYS = ("file_path", "Path", "AbsolutePath", "TargetFile", "File", "SearchPath")
+_EXEC_BATCH_BYTES = 65536
+_EXEC_BATCH_WAIT = 0.02
+
 
 # ----------------------------------------------------------------------------- state
 
@@ -54,9 +89,13 @@ def _state_dir(explicit: str | Path | None, env: Mapping[str, str]) -> Path:
     return Path(env.get("VIPII_GUARD_DIR") or Path.home() / ".vipii" / "guard")
 
 
+def _session_id(event: Mapping[str, Any]) -> str:
+    raw = event.get("session_id") or event.get("conversationId") or "default"
+    return re.sub(r"[^A-Za-z0-9_-]", "_", str(raw))[:80]
+
+
 def _session_file(state: Path, event: Mapping[str, Any]) -> Path:
-    sid = re.sub(r"[^A-Za-z0-9_-]", "_", str(event.get("session_id") or "default"))[:80]
-    return state / f"{sid}.json"
+    return state / f"{_session_id(event)}.json"
 
 
 def _ensure_dir(state: Path) -> None:
@@ -73,6 +112,19 @@ def _prune(state: Path, keep: Path) -> None:
                 p.unlink()
         except OSError:
             pass
+    cache = state / "cache"
+    if cache.is_dir():
+        for p in cache.rglob("*"):
+            try:
+                if p.is_file() and p.stat().st_mtime < cutoff:
+                    p.unlink()
+            except OSError:
+                pass
+        for d in sorted((x for x in cache.rglob("*") if x.is_dir()), reverse=True):
+            try:
+                d.rmdir()
+            except OSError:
+                pass
 
 
 class _Lock:
@@ -221,11 +273,49 @@ def _flat(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False).replace("\\\\", "/").lower()
 
 
-def _touches_state(tool_input: Any, state: Path, config: Path | None = None) -> bool:
+def _event_cwd(event: Mapping[str, Any]) -> Path:
+    raw = event.get("cwd")
+    if isinstance(raw, str) and raw:
+        return Path(raw)
+    ws = event.get("workspacePaths")
+    if isinstance(ws, list) and ws and isinstance(ws[0], str) and ws[0]:
+        return Path(ws[0])
+    return Path.cwd()
+
+
+def _resolve_path(raw: str, event: Mapping[str, Any]) -> Path:
+    p = Path(raw).expanduser()
+    if not p.is_absolute():
+        p = _event_cwd(event) / p
+    return p
+
+
+def _touches_state(tool_input: Any, state: Path, config: Path | None = None,
+                   base_dir: Path | None = None) -> bool:
     flat = _flat(tool_input)
     protected = [str(state), str(config)] if config else [str(state)]
-    return (any(p.replace("\\", "/").lower() in flat for p in protected)
-            or ".vipii/guard" in flat)  # covers the session dir and guard-config.json
+    if any(p.replace("\\", "/").lower() in flat for p in protected) or ".vipii/guard" in flat:
+        return True
+    if isinstance(tool_input, Mapping):
+        try:
+            state_res = state.resolve()
+            cfg_res = config.resolve() if config else None
+        except (OSError, ValueError, RuntimeError):
+            return False
+        for key in _AGY_PATH_KEYS:
+            val = tool_input.get(key)
+            if not isinstance(val, str) or not val.strip():
+                continue
+            try:
+                p = Path(val).expanduser()
+                if not p.is_absolute() and base_dir is not None:
+                    p = base_dir / p
+                res = p.resolve()
+            except (OSError, ValueError, RuntimeError):
+                continue
+            if res == state_res or state_res in res.parents or (cfg_res and res == cfg_res):
+                return True
+    return False
 
 
 _CONTROL = re.compile(r"(?:^|[\s;&|(`'\"/\\])vipii(?:\.exe)?\s+guard\b|-m\s+vipii\s+guard\b")
@@ -236,6 +326,141 @@ CONTROL_DENIED = ("vipii guard: its settings and stored mappings are not availab
 
 def _deny(reason: str) -> dict:
     return _hook("PreToolUse", permissionDecision="deny", permissionDecisionReason=reason)
+
+
+def _agy_deny(reason: str) -> dict[str, Any]:
+    return {"decision": "deny", "reason": reason}
+
+
+def _agy_overwrite(changes: dict[str, Any]) -> dict[str, Any]:
+    return {"decision": "ask", "overwrite": changes}
+
+
+def _is_antigravity(event: Mapping[str, Any]) -> bool:
+    return "hookEventName" in event or "toolCall" in event or "conversationId" in event
+
+
+def _write_masked_cache(state: Path, sid: str, target: Path, masked_text: str) -> Path:
+    cache_root = state / "cache"
+    cache_dir = cache_root / sid
+    _ensure_dir(state)
+    _ensure_dir(cache_root)
+    _ensure_dir(cache_dir)
+    digest = hashlib.sha256(f"{target}\n{masked_text}".encode()).hexdigest()[:16]
+    stem = re.sub(r"[^A-Za-z0-9._-]", "_", target.stem)[:40] or "file"
+    suffix = target.suffix if re.fullmatch(r"\.[A-Za-z0-9]{1,10}", target.suffix) else ".txt"
+    dest = cache_dir / f"{stem}_{digest}{suffix}"
+    if dest.exists():
+        return dest
+    fd, tmp = tempfile.mkstemp(prefix=".vipii-", dir=cache_dir)  # mode 0600
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(masked_text)
+        _retry_os(lambda: os.replace(tmp, dest))
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return dest
+
+
+def _wrap_command(cmd: str, sid: str, python: str | None = None) -> str:
+    py = python or sys.executable
+    if os.name == "nt":
+        b64 = base64.b64encode(cmd.encode("utf-8")).decode("ascii")
+        return subprocess.list2cmdline([py, "-m", "vipii", "guard", "--exec",
+                                         "--session", sid, "--cmd-b64", b64])
+    return (f"{shlex.quote(py)} -m vipii guard --exec"
+            f" --session {shlex.quote(sid)} -- {shlex.quote(cmd)}")
+
+
+def _pre_antigravity_read(tool: str, args: Mapping[str, Any], event: Mapping[str, Any],
+                          state: Path, cfg: GuardConfig) -> dict[str, Any] | None:
+    default_key = AGY_READ_PATH_KEYS[tool]
+    path_key = next((k for k in (default_key, "Path", "AbsolutePath", "File")
+                     if isinstance(args.get(k), str) and str(args[k]).strip()), None)
+    if path_key is None:
+        return None
+    raw_path = str(args[path_key])
+    if Path(raw_path).suffix.lower() in BINARY_SUFFIXES:
+        return _agy_deny("vipii guard: images, PDFs and media cannot be masked. Convert them to "
+                         "text, mask the text with `vipii anonymize`, and read that copy.")
+    target = _resolve_path(raw_path, event)
+    try:
+        st = target.stat()
+    except FileNotFoundError:
+        return None
+    if stat.S_ISDIR(st.st_mode):
+        return None
+    if not stat.S_ISREG(st.st_mode):
+        return _agy_deny("vipii guard: special files cannot be masked.")
+    raw_bytes = target.read_bytes()
+    if b"\x00" in raw_bytes:
+        return _agy_deny("vipii guard: binary files cannot be masked. Convert them to UTF-8 text "
+                         "and mask with `vipii anonymize` first.")
+    try:
+        text = raw_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        return _agy_deny("vipii guard: non-UTF-8 files cannot be masked. Convert them to UTF-8 "
+                         "text and mask with `vipii anonymize` first.")
+    analyzer = _analyzer(cfg)
+    if not analyzer.analyze(text):
+        return None
+    if tool in {"read_file", "view_file"} and args.get("ByteOffset"):
+        return _agy_deny("vipii guard: ByteOffset reads on files with PII are not supported "
+                         "because masking changes byte offsets. Use StartLine and EndLine instead.")
+    _ensure_dir(state)
+    mapping_path = _session_file(state, event)
+    with _Lock(mapping_path):
+        mapping = _load(mapping_path)
+        before = dict(mapping)
+        masked = _mask_text(text, mapping, analyzer)
+        if mapping != before:
+            _save(mapping_path, mapping)
+    _prune(state, keep=mapping_path)
+    cache_file = _write_masked_cache(state, _session_id(event), target, masked)
+    return _agy_overwrite({path_key: str(cache_file)})
+
+
+def _pre_antigravity(event: dict, state: Path, cfg: GuardConfig,
+                     env: Mapping[str, str]) -> dict[str, Any] | None:
+    tool_call = event.get("toolCall")
+    if not isinstance(tool_call, Mapping):
+        return None
+    tool = str(tool_call.get("name", ""))
+    args = tool_call.get("args")
+    if not isinstance(args, Mapping):
+        return None
+    if _touches_state(args, state, config_path(env), base_dir=_event_cwd(event)):
+        return _agy_deny(CONTROL_DENIED)
+    if tool in AGY_DENIED_TOOLS:
+        return _agy_deny("vipii guard: grep_search is disabled in Antigravity because grep "
+                         "output cannot be masked by hooks. Use read_file or run_command instead.")
+    if tool == "run_command":
+        cmd = str(args.get("CommandLine", ""))
+        if _CONTROL.search(cmd):
+            return _agy_deny(CONTROL_DENIED)
+        if cfg.restore_edits:
+            mapping = _load(_session_file(state, event))
+            if mapping:
+                cmd = deanonymize(cmd, mapping)
+        return _agy_overwrite({"CommandLine": _wrap_command(cmd, _session_id(event))})
+    if tool in AGY_READ_PATH_KEYS:
+        return _pre_antigravity_read(tool, args, event, state, cfg)
+    if tool in AGY_RESTORE_FIELDS and cfg.restore_edits:
+        mapping = _load(_session_file(state, event))
+        if not mapping:
+            return None
+        changes: dict[str, Any] = {}
+        for field in AGY_RESTORE_FIELDS[tool]:
+            if field in args:
+                restored = _walk(args[field], lambda s: deanonymize(s, mapping))
+                if restored != args[field]:
+                    changes[field] = restored
+        return _agy_overwrite(changes) if changes else None
+    return None
 
 
 def _pre(event: dict, state: Path, cfg: GuardConfig, env: Mapping[str, str]) -> dict | None:
@@ -296,8 +521,12 @@ def _display(event: dict, state: Path, cfg: GuardConfig, env: Mapping[str, str])
     return None if shown == delta else _hook("MessageDisplay", displayContent=shown)
 
 
-def _failsafe(event: dict, kind: str) -> dict | None:
+def _failsafe(event: dict, kind: str, antigravity: bool = False) -> dict | None:
     """The guard itself broke: refuse, never pass the original through."""
+    if antigravity:
+        if kind == "PreToolUse":
+            return _agy_deny("vipii guard failed (fail-closed). Set VIPII_GUARD=off to disable it.")
+        return None
     if kind == "PostToolUse":
         try:
             return _hook("PostToolUse", updatedToolOutput=_withhold(event.get("tool_response")))
@@ -322,8 +551,15 @@ def handle(event: dict, state_dir: str | Path | None = None,
            env: Mapping[str, str] | None = None) -> dict | None:
     """Map one hook event to the JSON the hook must print (None = print nothing)."""
     env = os.environ if env is None else env
-    kind = str(event.get("hook_event_name", ""))
-    fn = _HANDLERS.get(kind)
+    is_agy = _is_antigravity(event)
+    kind = str(event.get("hook_event_name") or event.get("hookEventName") or "")
+    if not kind and is_agy and isinstance(event.get("toolCall"), Mapping) and "error" not in event:
+        kind = "PreToolUse"
+    fn: Callable[..., dict | None] | None
+    if is_agy:
+        fn = _pre_antigravity if kind == "PreToolUse" else None
+    else:
+        fn = _HANDLERS.get(kind)
     if fn is None:
         return None
     try:
@@ -332,7 +568,7 @@ def handle(event: dict, state_dir: str | Path | None = None,
             return None
         return fn(event, _state_dir(state_dir, env), cfg, env)
     except Exception:
-        return _failsafe(event, kind)
+        return _failsafe(event, kind, antigravity=is_agy)
 
 
 def run(stdin_text: str, state_dir: str | Path | None = None,
@@ -348,8 +584,110 @@ def run(stdin_text: str, state_dir: str | Path | None = None,
     return 0, (json.dumps(out, ensure_ascii=True) if out else ""), ""
 
 
+def _mask_exec_chunk(text: str, analyzer: Analyzer, state: Path, mapping_path: Path) -> str:
+    if not text.strip() or not analyzer.analyze(text):
+        return text
+    _ensure_dir(state)
+    with _Lock(mapping_path):
+        mapping = _load(mapping_path)
+        before = dict(mapping)
+        masked = _mask_text(text, mapping, analyzer)
+        if mapping != before:
+            _save(mapping_path, mapping)
+    _prune(state, keep=mapping_path)
+    return masked
+
+
+def exec_command(command: str, session_id: str = "default",
+                 state_dir: str | Path | None = None,
+                 env: Mapping[str, str] | None = None,
+                 stdout: Any = None, stderr: Any = None) -> int:
+    """Run one shell command and mask its stdout/stderr before Antigravity sees them."""
+    env = os.environ if env is None else env
+    out_stream = stdout or sys.stdout.buffer
+    err_stream = stderr or sys.stderr.buffer
+    cfg = load_config(env)
+    if not cfg.enabled:
+        return subprocess.run(command, shell=True).returncode
+    try:
+        analyzer = _analyzer(cfg)
+    except Exception:
+        err_stream.write((WITHHELD + "\n").encode("utf-8"))
+        err_stream.flush()
+        return 2
+    state = _state_dir(state_dir, env)
+    mapping_path = _session_file(state, {"session_id": session_id})
+    proc = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            bufsize=0)
+    assert proc.stdout is not None and proc.stderr is not None
+    q: queue.Queue[tuple[str, bytes | None]] = queue.Queue()
+
+    def _pump(name: str, pipe: Any) -> None:
+        try:
+            for chunk in iter(pipe.readline, b""):
+                q.put((name, chunk))
+        finally:
+            q.put((name, None))
+
+    threads = [
+        threading.Thread(target=_pump, args=("stdout", proc.stdout), daemon=True),
+        threading.Thread(target=_pump, args=("stderr", proc.stderr), daemon=True),
+    ]
+    for t in threads:
+        t.start()
+
+    bufs: dict[str, bytearray] = {"stdout": bytearray(), "stderr": bytearray()}
+    tainted: dict[str, bool] = {"stdout": False, "stderr": False}
+    streams = {"stdout": out_stream, "stderr": err_stream}
+    done: set[str] = set()
+
+    def _flush(name: str) -> None:
+        buf = bufs[name]
+        if not buf:
+            return
+        raw = bytes(buf)
+        buf.clear()
+        target = streams[name]
+        if tainted[name]:
+            return
+        if b"\x00" in raw:
+            tainted[name] = True
+            target.write((WITHHELD + "\n").encode("utf-8"))
+            target.flush()
+            return
+        try:
+            text = raw.decode("utf-8")
+            masked = _mask_exec_chunk(text, analyzer, state, mapping_path)
+            target.write(masked.encode("utf-8"))
+        except UnicodeDecodeError:
+            tainted[name] = True
+            target.write((WITHHELD + "\n").encode("utf-8"))
+        except Exception:
+            target.write((WITHHELD + "\n").encode("utf-8"))
+        target.flush()
+
+    while len(done) < 2:
+        try:
+            name, chunk = q.get(timeout=_EXEC_BATCH_WAIT)
+        except queue.Empty:
+            _flush("stdout")
+            _flush("stderr")
+            continue
+        if chunk is None:
+            done.add(name)
+            _flush(name)
+            continue
+        bufs[name].extend(chunk)
+        if len(bufs[name]) >= _EXEC_BATCH_BYTES:
+            _flush(name)
+
+    for t in threads:
+        t.join()
+    return proc.wait()
+
+
 def purge(state_dir: str | Path | None = None, env: Mapping[str, str] | None = None) -> int:
-    """Delete every stored mapping. Returns the number of files removed."""
+    """Delete every stored mapping and masked cache file. Returns the number of files removed."""
     state = _state_dir(state_dir, os.environ if env is None else env)
     count = 0
     for pattern in ("*.json", "*.lock", "*.corrupt-*"):
@@ -359,6 +697,10 @@ def purge(state_dir: str | Path | None = None, env: Mapping[str, str] | None = N
                 count += 1
             except OSError:
                 pass
+    cache = state / "cache"
+    if cache.is_dir():
+        count += sum(1 for p in cache.rglob("*") if p.is_file())
+        shutil.rmtree(cache, ignore_errors=True)
     return count
 
 
@@ -445,6 +787,40 @@ def hooks_in(settings: Path) -> list[str]:
         return sorted(e for e, groups in hooks.items()
                       if any(_is_ours(h) for g in groups for h in g.get("hooks", [])))
     except (OSError, ValueError, AttributeError):
+        return []
+
+
+_AGY_GROUPED_EVENTS = ("PreToolUse", "PostToolUse")
+_AGY_FLAT_EVENTS = ("PreInvocation", "PostInvocation", "SessionStart", "Stop")
+
+
+def antigravity_hooks_in(hooks_file: Path) -> list[str]:
+    """Events for which an Antigravity ``hooks.json`` contains an enabled vipii guard hook."""
+    try:
+        data = json.loads(hooks_file.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return []
+        found: set[str] = set()
+        for spec in data.values():
+            if not isinstance(spec, dict) or spec.get("enabled") is False:
+                continue
+            for event in _AGY_GROUPED_EVENTS:
+                groups = spec.get(event)
+                if isinstance(groups, list) and any(
+                    isinstance(h, dict) and _CONTROL.search(str(h.get("command", "")))
+                    for g in groups if isinstance(g, dict)
+                    for h in g.get("hooks", []) if isinstance(g.get("hooks"), list)
+                ):
+                    found.add(event)
+            for event in _AGY_FLAT_EVENTS:
+                handlers = spec.get(event)
+                if isinstance(handlers, list) and any(
+                    isinstance(h, dict) and _CONTROL.search(str(h.get("command", "")))
+                    for h in handlers
+                ):
+                    found.add(event)
+        return sorted(found)
+    except (OSError, ValueError, AttributeError, TypeError):
         return []
 
 

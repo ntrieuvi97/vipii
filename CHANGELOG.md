@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-21
+
+Alpha. The guard has had no independent review yet.
+
+### Added
+- Antigravity `PreToolUse` guard and bundled root `hooks.json`:
+  - `read_file` / `view_file` / `view_file_outline` / `view_code_item`: masks files locally before
+    the tool reads them and overwrites `Path` / `AbsolutePath` / `File` to the masked cache copy
+    (under `~/.vipii/guard/cache/`, mode `0600`); denies binary/non-UTF-8 files and `ByteOffset`
+    reads on files containing PII.
+  - `run_command`: wraps `CommandLine` via `vipii guard --exec` so `stdout` and `stderr` are masked
+    before Antigravity receives them, preserving the original exit code.
+  - Restores placeholders in `write_file`, `edit_file`, `write_to_file`, `replace_file_content`,
+    `multi_replace_file_content`, `manage_task`, `send_command_input`, and `run_command` when
+    `restore-edits` is enabled.
+  - Denies `grep_search`, mapping/config access (including symlink resolution), and `vipii guard`
+    control commands.
+  - `vipii guard status` now detects Antigravity `hooks.json` files as well.
+
 ## [0.3.1] - 2026-11-19
 
 ### Fixed
